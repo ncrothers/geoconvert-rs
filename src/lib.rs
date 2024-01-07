@@ -1,5 +1,8 @@
 #![warn(clippy::pedantic)]
-#![allow(clippy::must_use_candidate)]
+#![allow(
+    clippy::must_use_candidate,
+    clippy::return_self_not_must_use
+)]
 
 use thiserror::Error;
 
@@ -7,6 +10,10 @@ pub mod latlon;
 pub mod mgrs;
 pub mod utm;
 pub mod utility;
+
+pub use latlon::LatLon;
+pub use mgrs::Mgrs;
+pub use utm::UtmUps;
 
 pub(crate) mod projections {
     pub mod transverse_mercator;
@@ -17,6 +24,8 @@ pub(crate) mod constants;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("Coordinate parameters are not valid: {0}")]
+    InvalidCoord(String),
     #[error("MGRS String is invalid: {0}")]
     InvalidMgrs(String),
     #[error("UTM coords are invalid: {0}")]

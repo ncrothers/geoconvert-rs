@@ -1,7 +1,5 @@
 use std::{ops::{Add, Sub, Neg, RemAssign}, f64::EPSILON};
 
-use num::{FromPrimitive, Float};
-
 use crate::ThisOrThat;
 
 pub mod dms {
@@ -19,10 +17,7 @@ pub mod dms {
     pub const DS: i32 = DM * MS;
 }
 
-fn special_sum<T>(u: T, v: T) -> (T, T)
-where
-    T: Float + FromPrimitive
-{
+fn special_sum(u: f64, v: f64) -> (f64, f64) {
     let s = u + v;
     let up = s - v;
     let vpp = s - up;
@@ -68,10 +63,10 @@ pub(crate) fn taupf(tau: f64, es: f64) -> f64 {
 pub(crate) fn tauf(taup: f64, es: f64) -> f64 {
     let numit = 5;
     let tol: f64 = EPSILON.sqrt() / 10.0;
-    let taumax = 2. / EPSILON.sqrt();
+    let taumax = 2.0 / EPSILON.sqrt();
 
     let e2m: f64 = 1.0 - es.powi(2);
-    let mut tau: f64 = if taup.abs() > 70. {
+    let mut tau: f64 = if taup.abs() > 70.0 {
         taup * 1_f64.eatanhe(es).exp()
     } else {
         taup / e2m
@@ -91,18 +86,30 @@ pub(crate) fn tauf(taup: f64, es: f64) -> f64 {
 }
 
 pub(crate) trait GeoMath {
+    fn is_zero(&self) -> bool;
+    fn eps_eq(&self, other: Self) -> bool;
     fn ang_normalize(&self) -> Self;
     fn ang_diff(&self, other: Self) -> Self;
     fn eatanhe(&self, es: Self) -> Self;
     fn remainder(&self, denom: Self) -> Self;
+    fn taupf(&self, es: Self) -> Self;
+    fn tauf(&self, es: Self) -> Self;
 }
 
-impl<T> GeoMath for T where T: Float + FromPrimitive {
-    fn ang_normalize(&self) -> T {
-        let value = self.remainder(FromPrimitive::from_i32(dms::TD).expect("dms::TD must be convertible"));
-        let hd = FromPrimitive::from_i32(dms::HD).expect("dms::HD must be convertible");
+impl GeoMath for f64 {
+    fn is_zero(&self) -> bool {
+        self.abs() < f64::EPSILON
+    }
 
-        if value.abs() == hd {
+    fn eps_eq(&self, other: f64) -> bool {
+        (*self - other).abs() < f64::EPSILON
+    }
+
+    fn ang_normalize(&self) -> f64 {
+        let value = self.remainder(dms::TD as f64);
+        let hd = dms::HD as f64;
+
+        if value.abs().eps_eq(hd) {
             hd.copysign(*self)
         }
         else {
@@ -110,8 +117,8 @@ impl<T> GeoMath for T where T: Float + FromPrimitive {
         }
     }
 
-    fn ang_diff(&self, other: T) -> T {
-        let td = FromPrimitive::from_i32(dms::TD).expect("dms::TD must be convertible");
+    fn ang_diff(&self, other: f64) -> f64 {
+        let td = dms::TD as f64;
         // Use remainder instead of AngNormalize, since we treat boundary cases
         // later taking account of the error
         let (diff, err) = special_sum((-*self).remainder(td), other % td);
@@ -119,9 +126,9 @@ impl<T> GeoMath for T where T: Float + FromPrimitive {
         // apply remainder yet again.
         let (diff, err) = special_sum(diff.remainder(td), err);
         
-        let hd = FromPrimitive::from_i32(dms::HD).expect("dms::HD must be convertible");
+        let hd = dms::HD as f64;
         // Fix the sign if d = -180, 0, 180.
-        if diff.is_zero() || diff.abs() == hd {
+        if diff.is_zero() || diff.abs().eps_eq(hd) {
             // If e == 0, take sign from y - x
             // else (e != 0, implies d = +/-180), d and e must have opposite signs
             let sign = if err.is_zero() { other - *self } else { -err };
@@ -132,7 +139,7 @@ impl<T> GeoMath for T where T: Float + FromPrimitive {
         }
     }
 
-    fn eatanhe(&self, es: T) -> T {
+    fn eatanhe(&self, es: f64) -> f64 {
         if es.is_sign_positive() {
             es * (es * *self).atanh()
         } else {
@@ -142,5 +149,37 @@ impl<T> GeoMath for T where T: Float + FromPrimitive {
 
     fn remainder(&self, denom: Self) -> Self {
         *self - (*self / denom).round() * denom
+    }
+
+    fn taupf(&self, es: f64) -> f64 {
+        let tau1: f64 = 1.0_f64.hypot(*self);
+        let sig = (*self / tau1).eatanhe(es).sinh();
+
+        1.0_f64.hypot(sig) * *self - sig * tau1
+    }
+
+    fn tauf(&self, es: f64) -> f64 {
+        let numit = 5;
+        let tol: f64 = EPSILON.sqrt() / 10.0;
+        let taumax = 2.0 / EPSILON.sqrt();
+
+        let e2m: f64 = 1.0 - es.powi(2);
+        let mut tau: f64 = if self.abs() > 70.0 {
+            self * 1_f64.eatanhe(es).exp()
+        } else {
+            self / e2m
+        };
+
+        let stol: f64 = tol * self.abs().max(1.0);
+        for _ in 0..numit {
+            let taupa: f64 = taupf(tau, es);
+            let dtau: f64 = (self - taupa) * (1.0 + e2m * tau.powi(2))
+                / (e2m * 1.0_f64.hypot(tau) * 1.0_f64.hypot(taupa));
+            tau += dtau;
+            if dtau.abs() < stol {
+                break;
+            }
+        }
+        tau
     }
 }

@@ -1,8 +1,9 @@
-use std::fmt::Display;
+use std::{fmt::Display, str::FromStr};
 
 use lazy_static::lazy_static;
+use num::Integer;
 
-use crate::{ParseCoord, Error, utm::{zonespec::{self, MINUTMZONE, MAXUTMZONE, UPS}, Utm, check_coords}, utility::dms, ThisOrThat, latlon::LatLon};
+use crate::{ParseCoord, Error, utm::{zonespec::{self, MINUTMZONE, MAXUTMZONE, UPS}, UtmUps}, utility::{dms, GeoMath}, ThisOrThat, latlon::LatLon};
 
 const HEMISPHERES: &str = "SN";
 const UTMCOLS: &[&str] = &["ABCDEFGH", "JKLMNPQR", "STUVWXYZ"];
@@ -29,6 +30,34 @@ pub const UPSEASTING: i32= 20;
 pub const UTMEASTING: i32= 5;
 pub const UTM_N_SHIFT: i32= (MAXUTM_S_ROW - MINUTM_N_ROW) * TILE;
 
+const MIN_EASTING: [i32; 4] = [
+    MINUPS_S_IND,
+    MINUPS_N_IND,
+    MINUTMCOL,
+    MINUTMCOL,
+];
+
+const MAX_EASTING: [i32; 4] = [
+    MAXUPS_S_IND,
+    MAXUPS_N_IND,
+    MAXUTMCOL,
+    MAXUTMCOL,
+];
+
+const MIN_NORTHING: [i32; 4] = [
+    MINUPS_S_IND,
+    MINUPS_N_IND,
+    MINUTM_S_ROW,
+    MINUTM_S_ROW - MAXUTM_S_ROW - MINUTM_N_ROW,
+];
+
+const MAX_NORTHING: [i32; 4] = [
+    MAXUPS_S_IND,
+    MAXUPS_N_IND,
+    MAXUTM_N_ROW + MAXUTM_S_ROW - MINUTM_N_ROW,
+    MAXUTM_N_ROW,
+];
+
 pub const BASE: i32= 10;
 pub const TILE_LEVEL: i32= 5;
 pub const UTM_ROW_PERIOD: i32 = 20;
@@ -36,20 +65,69 @@ pub const UTM_EVEN_ROW_SHIFT: i32= 5;
 pub const MAX_PRECISION: i32= 5 + 6;
 pub const MULT: i32= 1_000_000;
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Mgrs {
-    pub(crate) utm: Utm,
-    precision: i32,
+    pub(crate) utm: UtmUps,
+    pub(crate) precision: i32,
 }
 
 impl Mgrs {
     pub fn is_utm(&self) -> bool {
         self.utm.zone != UPS
     }
+
+    pub fn zone(&self) -> i32 {
+        self.utm.zone
+    }
+
+    pub fn is_north(&self) -> bool {
+        self.utm.northp
+    }
+
+    pub fn easting(&self) -> f64 {
+        self.utm.easting
+    }
+
+    pub fn northing(&self) -> f64 {
+        self.utm.northing
+    }
+
+    pub fn precision(&self) -> i32 {
+        self.precision
+    }
+
+    /// TODO
+    /// 
+    /// # Errors
+    pub fn parse_str(mgrs_str: &str) -> Result<Mgrs, Error> {
+        Self::from_str(mgrs_str)
+    }
+
+    pub fn from_latlon(value: &LatLon, precision: i32) -> Mgrs {
+        Mgrs {
+            utm: UtmUps::from_latlon(value),
+            precision,
+        }
+    }
+
+    pub fn to_latlon(&self) -> LatLon {
+        self.utm.to_latlon()
+    }
+
+    pub fn from_utm(value: &UtmUps, precision: i32) -> Mgrs {
+        Mgrs {
+            utm: *value,
+            precision,
+        }
+    }
+
+    pub fn to_utm(&self) -> UtmUps {
+        self.utm
+    }
 }
 
 fn utm_row(band_idx: i32, col_idx: i32, row_idx: i32) -> i32 {
-    let c = 100. * (8. * band_idx as f64 + 4.) / dms::QD as f64;
+    let c = 100.0 * (8.0 * band_idx as f64 + 4.0) / dms::QD as f64;
     let northp = band_idx >= 0;
     // These are safe bounds on the rows
     //  band_idx  minrow maxrow
@@ -89,7 +167,7 @@ fn utm_row(band_idx: i32, col_idx: i32, row_idx: i32) -> i32 {
     let base_row = (min_row + max_row) / 2 - UTM_ROW_PERIOD as i32 / 2;
     // Offset row_idx by the multiple of UTM_ROW_PERIOD which brings it as close as
     // possible to the center of the latitude band, (min_row + max_row) / 2.
-    // (Add MAXUTM_S_ROW = 5 * UTM_ROW_PERIOD to ensure operand is positive.)
+    // (Add MAXUTM_S_ROW = 5 * UTM_ROW_PERIOD to ensure operand is positive.0)
     let mut row_idx = (row_idx - base_row + MAXUTM_S_ROW as i32) % UTM_ROW_PERIOD as i32 + base_row;
     
     if !(row_idx >= min_row && row_idx <= max_row) {
@@ -120,12 +198,14 @@ fn utm_row(band_idx: i32, col_idx: i32, row_idx: i32) -> i32 {
     row_idx
 }
 
-impl ParseCoord for Mgrs {
+impl FromStr for Mgrs {
+    type Err = Error;
+
     #[allow(clippy::too_many_lines)]
-    fn parse_coord(value: &str) -> Result<Self, Error> {
-        let value = value.to_ascii_uppercase();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let value = s.to_ascii_uppercase();
         let mut p = 0;
-        let mut len = value.len();
+        let len = value.len();
         let chars = value.as_bytes();
 
         if len >= 3 && value.starts_with("INV") {
@@ -176,21 +256,21 @@ impl ParseCoord for Mgrs {
             let deg = (UTM_N_SHIFT as f64) / (dms::QD * TILE) as f64;
             let (x, y) = if utmp {
                 // Pick central meridian except for 31V
-                let x = TILE as f64 * (zone == 31 && band_idx == 17).ternary(4., 5.);
+                let x = TILE as f64 * (zone == 31 && band_idx == 17).ternary(4.0, 5.0);
                 // TODO: continue from here
-                let y_add = northp.ternary(0., UTM_N_SHIFT as f64);
-                let y = (8. * (band_idx as f64 - 9.5) * deg + 0.5).floor() * TILE as f64 + y_add;
+                let y_add = northp.ternary(0.0, UTM_N_SHIFT as f64);
+                let y = (8.0 * (band_idx as f64 - 9.5) * deg + 0.5).floor() * TILE as f64 + y_add;
 
                 (x, y)
             } else {
-                let x_cond = (band_idx % 2 == 1).ternary(1., -1.);
-                let x = (x_cond * (4. * deg + 0.5).floor() + UPSEASTING as f64) * TILE as f64;
+                let x_cond = band_idx.is_odd().ternary(1.0, -1.0);
+                let x = (x_cond * (4.0 * deg + 0.5).floor() + UPSEASTING as f64) * TILE as f64;
                 let y = (UPSEASTING * TILE) as f64;
                 (x, y)
             };
 
             return Ok(Mgrs {
-                utm: Utm::new(zone, northp, x, y),
+                utm: UtmUps::new(zone, northp, x, y),
                 precision: -1
             })
         } else if len - p < 2 {
@@ -219,7 +299,7 @@ impl ParseCoord for Mgrs {
         p += 1;
 
         if utmp {
-            if zonem % 2 == 1 {
+            if zonem.is_odd() {
                 row_idx = (row_idx + UTM_ROW_PERIOD as i32 - UTM_EVEN_ROW_SHIFT as i32) % UTM_ROW_PERIOD as i32;
             }
 
@@ -230,11 +310,11 @@ impl ParseCoord for Mgrs {
                 return Err(Error::InvalidMgrs(format!("Block {} not in zone/band {}", &value[p-2..p], &value[0..p-2])))
             }
 
-            row_idx = northp.ternary(row_idx, row_idx + 100);
+            row_idx = northp.ternary_lazy(|| row_idx, || row_idx + 100);
             col_idx += MINUTMCOL;
         }
         else {
-            let eastp = band_idx % 2 == 1;
+            let eastp = band_idx.is_odd();
             col_idx += if eastp { UPSEASTING } else if northp { MINUPS_N_IND } else { MINUPS_S_IND };
             row_idx += if northp { MINUPS_N_IND as i32 } else { MINUPS_S_IND as i32 };
         }
@@ -285,7 +365,7 @@ impl ParseCoord for Mgrs {
         let y = (TILE as f64 * y as f64) / unit as f64;
 
         Ok(Self {
-            utm: Utm::new(
+            utm: UtmUps::new(
                 zone,
                 northp,
                 x,
@@ -301,16 +381,81 @@ pub(crate) fn to_latitude_band(lat: f64) -> i32 {
     (-10).max(9.min((lat_int + 80) / 8 - 10))
 }
 
-lazy_static! {
-    static ref ANG_EPS: f64 = 1_f64 * 2_f64.powi(-(f64::DIGITS as i32 - 7));
+pub(crate) fn check_coords(utmp: bool, northp: bool, x: f64, y: f64) -> Result<(bool, f64, f64), Error> {
+    lazy_static! {
+        static ref ANG_EPS: f64 = 1_f64 * 2_f64.powi(-(f64::DIGITS as i32 - 25));
+    }
+
+    let x_int = (x / TILE as f64).floor() as i32;
+    let y_int = (y / TILE as f64).floor() as i32;
+    let ind = utmp.ternary(2, 0) + northp.ternary(1, 0);
+
+    let mut x_new = x;
+    let mut y_new = y;
+
+    if !(MIN_EASTING[ind]..MAX_EASTING[ind]).contains(&x_int) {
+        if x_int == MAX_EASTING[ind] && x.eps_eq((MAX_EASTING[ind] * TILE) as f64) {
+            x_new -= *ANG_EPS;
+        } else {
+            return Err(Error::InvalidMgrs(
+                format!(
+                    "Easting {:.2}km not in MGRS/{} range for {} hemisphere [{:.2}km, {:.2}km]",
+                    x / 1000.0,
+                    utmp.ternary("UTM", "UPS"),
+                    northp.ternary("N", "S"),
+                    MIN_EASTING[ind] * (TILE / 1000),
+                    MAX_EASTING[ind] * (TILE / 1000),
+                )
+            ));
+        }
+    }
+
+    if !(MIN_NORTHING[ind]..MAX_NORTHING[ind]).contains(&y_int) {
+        if y_int == MAX_NORTHING[ind] && y.eps_eq((MAX_NORTHING[ind] * TILE) as f64) {
+            y_new -= *ANG_EPS;
+        } else {
+            return Err(Error::InvalidMgrs(
+                format!(
+                    "Northing {:.2}km not in MGRS/{} range for {} hemisphere [{:.2}km, {:.2}km]",
+                    y / 1000.0,
+                    utmp.ternary("UTM", "UPS"),
+                    northp.ternary("N", "S"),
+                    MIN_NORTHING[ind] * (TILE / 1000),
+                    MAX_NORTHING[ind] * (TILE / 1000),
+                )
+            ));
+        }
+    }
+
+    let (northp_new, y_new) = if utmp {
+        if northp && y_int < MINUTM_S_ROW {
+            let northp = false;
+            (false, y_new + UTM_N_SHIFT as f64)
+        } else if !northp && y_int >= MAXUTM_S_ROW {
+            if y.eps_eq((MAXUTM_S_ROW * TILE) as f64) {
+                (northp, y_new - *ANG_EPS)
+            } else {
+                (true, y - UTM_N_SHIFT as f64)
+            }
+        } else {
+            (northp, y_new)
+        }
+    } else {
+        (northp, y_new)
+    };
+
+    Ok((northp_new, x_new, y_new))
 }
 
-// TODO: Finish, requires UTM and UPS stuff though
 impl Display for Mgrs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        lazy_static! {
+            static ref ANG_EPS: f64 = 1_f64 * 2_f64.powi(-(f64::DIGITS as i32 - 7));
+        }
+
         let lat = if self.utm.zone > 0 {
             // Does a rough estimate for latitude determine the latitude band?
-            let y_est = if self.utm.northp { self.utm.northing } else { self.utm.northing - UTM_N_SHIFT as f64 };
+            let y_est = self.utm.northp.ternary_lazy(|| self.utm.northing, || self.utm.northing - UTM_N_SHIFT as f64);
             // A cheap calculation of the latitude which results in an "allowed"
             // latitude band would be
             //   lat = ApproxLatitudeBand(ys) * 8 + 4;
@@ -318,18 +463,18 @@ impl Display for Mgrs {
             // Here we do a more careful job using the band letter corresponding to
             // the actual latitude.
             let y_est = y_est / TILE as f64;
-            if y_est.abs() < 1. {
+            if y_est.abs() < 1.0 {
                 0.9 * y_est
             }
             else {
-                let pole_add = if y_est > 0. { 1. } else { -1. };
+                let pole_add = (y_est > 0.0).ternary(1.0, -1.0);
                 let lat_poleward = 0.901 * y_est + pole_add * 0.135;
-                let lat_eastward = 0.902 * y_est * (1. - 1.85e-6 * y_est.powi(2));
+                let lat_eastward = 0.902 * y_est * (1.0 - 1.85e-6 * y_est.powi(2));
 
                 if to_latitude_band(lat_poleward) == to_latitude_band(lat_eastward) {
                     lat_poleward
                 } else {
-                    let coord = LatLon::try_from(Utm::new(self.utm.zone as i32, self.utm.northp, self.utm.easting, self.utm.northing)).expect("Couldn't convert Utm to latlon");
+                    let coord = UtmUps::new(self.utm.zone as i32, self.utm.northp, self.utm.easting, self.utm.northing).to_latlon();
                     coord.latitude
                 }
             }
@@ -340,7 +485,12 @@ impl Display for Mgrs {
         // Other Forward call
         let utmp = self.utm.zone != 0;
         // TODO: Check coords on creation rather than in infallible methods like fmt()
-        check_coords(utmp, self.utm.northp, self.utm.easting, self.utm.northing, true).expect("Invalid coords");
+        let (northp, easting, northing) = check_coords(utmp, self.utm.northp, self.utm.easting, self.utm.northing)
+            .map_err(|e| {
+                println!("UTM: {:?}", self.utm);
+                e
+            })
+            .expect("Invalid coords");
         // Create pre-allocated string of the correct length
         let mut mgrs_str = [0u8; 2 + 3 + 2*MAX_PRECISION as usize];
         let zone = self.utm.zone - 1;
@@ -354,8 +504,8 @@ impl Display for Mgrs {
             mgrs_str[1] = digits[(self.utm.zone % BASE) as usize];
         }
 
-        let xx = self.utm.easting * MULT as f64;
-        let yy = self.utm.northing * MULT as f64;
+        let xx = easting * MULT as f64;
+        let yy = northing * MULT as f64;
 
         let ix = xx.floor() as i64;
         let iy = yy.floor() as i64;
@@ -366,11 +516,11 @@ impl Display for Mgrs {
 
         if utmp {
             // Correct fuzziness in latitude near equator
-            let band_idx = (lat.abs() < *ANG_EPS).ternary(self.utm.northp.ternary(0, -1), to_latitude_band(lat));
+            let band_idx = (lat.abs() < *ANG_EPS).ternary(northp.ternary(0, -1), to_latitude_band(lat));
             let col_idx = xh - MINUTMCOL;
             let row_idx = utm_row(band_idx, col_idx, yh % UTM_ROW_PERIOD);
 
-            if row_idx != yh - self.utm.northp.ternary(MINUTM_N_ROW, MAXUTM_S_ROW) {
+            if row_idx != yh - northp.ternary(MINUTM_N_ROW, MAXUTM_S_ROW) {
                 // TODO: Latitude is inconsistent with UTM coordinates
                 todo!()
             }
@@ -379,19 +529,19 @@ impl Display for Mgrs {
             z += 1;
             mgrs_str[z] = UTMCOLS[(zone % 3) as usize].as_bytes()[col_idx as usize];
             z += 1;
-            let idx = (yh + (zone % 2 == 1).ternary(UTM_EVEN_ROW_SHIFT, 0)) % UTM_ROW_PERIOD;
+            let idx = (yh + zone.is_odd().ternary(UTM_EVEN_ROW_SHIFT, 0)) % UTM_ROW_PERIOD;
             mgrs_str[z] = UTMROW.as_bytes()[idx as usize];
             z += 1;
         } else {
             let eastp = xh >= UPSEASTING;
-            let band_idx: usize = self.utm.northp.ternary(2, 0) + eastp.ternary(1, 0);
+            let band_idx: usize = northp.ternary(2, 0) + eastp.ternary(1, 0);
             mgrs_str[z] = UPSBAND.as_bytes()[band_idx];
             z += 1;
-            let idx = xh - eastp.ternary(UPSEASTING, self.utm.northp.ternary(MINUPS_N_IND, MINUPS_S_IND));
+            let idx = xh - eastp.ternary(UPSEASTING, northp.ternary(MINUPS_N_IND, MINUPS_S_IND));
             mgrs_str[z] = UPSCOLS[band_idx].as_bytes()[idx as usize];
             z += 1;
-            let idx = yh - self.utm.northp.ternary(MINUPS_N_IND, MINUPS_S_IND);
-            mgrs_str[z] = UPSROWS[usize::from(self.utm.northp)].as_bytes()[idx as usize];
+            let idx = yh - northp.ternary(MINUPS_N_IND, MINUPS_S_IND);
+            mgrs_str[z] = UPSROWS[usize::from(northp)].as_bytes()[idx as usize];
             z += 1;
         }
 
@@ -413,4 +563,3 @@ impl Display for Mgrs {
         write!(f, "{}", String::from_utf8_lossy(&mgrs_str).trim_end_matches('\0'))
     }
 }
-

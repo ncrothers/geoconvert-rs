@@ -1,7 +1,6 @@
-use std::{time::Instant, fs};
+use std::{time::Instant, fs, str::FromStr};
 
-use geoconvert::{mgrs::Mgrs, ParseCoord, utm::Utm, latlon::LatLon};
-use geomorph::coord::Coord;
+use geoconvert::{mgrs::Mgrs, ParseCoord, utm::UtmUps, latlon::LatLon};
 use polars::prelude::*;
 
 fn test_mgrs_accuracy() {
@@ -16,10 +15,10 @@ fn test_mgrs_accuracy() {
         .lines()
         .map(|line| {
             let mut pieces = line.split(' ');
-            LatLon {
-                latitude: pieces.next().unwrap().parse().unwrap(),
-                longitude: pieces.next().unwrap().parse().unwrap(),
-            }
+            LatLon::create(
+                pieces.next().unwrap().parse().unwrap(),
+                pieces.next().unwrap().parse().unwrap()
+            ).unwrap()
         });
 
     let mgrs_vec = mgrs_points.clone().collect::<Vec<_>>();
@@ -30,16 +29,16 @@ fn test_mgrs_accuracy() {
     let preds = mgrs_points
         .clone()
         .map(|mgrs | {
-            let val = Mgrs::parse_coord(mgrs).unwrap();
-            LatLon::try_from(val).unwrap().to_string()
+            let val = Mgrs::from_str(mgrs).unwrap();
+            val.to_latlon().to_string()
         })
         .collect::<Vec<_>>();
 
     let errors = mgrs_points
         .zip(latlon_points)
         .map(|(mgrs, latlon)| {
-            let val = Mgrs::parse_coord(mgrs).unwrap();
-            let coord = LatLon::try_from(val).unwrap();
+            let val = Mgrs::from_str(mgrs).unwrap();
+            let coord = val.to_latlon();
     
             coord.haversine(&latlon)
         })
@@ -51,7 +50,7 @@ fn test_mgrs_accuracy() {
     let distance = Series::new("distance", &errors);
 
     let df = DataFrame::new(vec![source, pred, trues, distance]).unwrap();
-    let df = df.filter(&df.column("distance").unwrap().gt(-1.).unwrap()).unwrap();
+    let df = df.filter(&df.column("distance").unwrap().gt(-1.0).unwrap()).unwrap();
     
     let df = df.sort(["distance"], false, false).unwrap();
     
@@ -71,7 +70,7 @@ fn test_mgrs_parsing_accuracy() {
 
     let n_incorrect = mgrs_points
         .fold(0, |sum, mgrs| {
-            let val = Mgrs::parse_coord(mgrs).unwrap();
+            let val = Mgrs::from_str(mgrs).unwrap();
             let pred = val.to_string();
             if mgrs != pred {
                 sum + 1
@@ -84,22 +83,52 @@ fn test_mgrs_parsing_accuracy() {
     println!("Number of incorrect parsings: {}", n_incorrect);
 }
 
+fn test_mgrs_latlon_and_back_accuracy() {
+    let mgrs_points = fs::read_to_string("./helpers/output_mgrs.txt")
+        .unwrap();
+    let mgrs_points = mgrs_points
+        .lines()
+        .map(|line| line.trim());
+
+    let n_incorrect = mgrs_points
+        .fold(0, |sum, mgrs| {
+            let val = Mgrs::from_str(mgrs).unwrap();
+            let latlon = val.to_latlon();
+            let pred = Mgrs::from_latlon(&latlon, val.precision());
+            let pred_latlon = pred.to_latlon();
+            let pred = pred.to_string();
+            if mgrs != pred {
+                println!("Incorrect found!");
+                println!("- Pred: {pred}");
+                println!("- Pred_lat: {pred_latlon:?}");
+                println!("- True: {mgrs}");
+                println!("- True_lat: {latlon:?}");
+                println!("- Dist: {}m", pred_latlon.haversine(&latlon));
+                sum + 1
+            }
+            else {
+                sum
+            }
+        });
+
+    println!("Number of incorrect parsings: {}", n_incorrect);
+}
+
 fn test_mgrs() {
     let mgrs_str = "25XEN0416386465";
-    let val = Mgrs::parse_coord(mgrs_str).unwrap();
+    let val = Mgrs::from_str(mgrs_str).unwrap();
     
     println!("Parsed value: {val:?}");
     println!("Original MGRS: {mgrs_str}");
     println!("Printed value: {val}");
 
-    let utm_test = Utm::new(24, true, 294257., 4522751.);
-    let geo_utm = geomorph::utm::Utm::new(294257., 4522751., true, 24, 'A', false);
+    let utm_test = UtmUps::create(24, true, 294257.0, 4522751.0).unwrap();
 
-    println!("Converted coords: {:?}", LatLon::try_from(utm_test).unwrap());
-    println!("Converted coords: {:?}", Coord::from(geo_utm));
+    println!("Converted coords: {:?}", utm_test.to_latlon());
 }
 
 fn main() {
     test_mgrs_accuracy();
     test_mgrs_parsing_accuracy();
+    test_mgrs_latlon_and_back_accuracy();
 }
