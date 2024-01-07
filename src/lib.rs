@@ -1,7 +1,10 @@
 #![warn(clippy::pedantic)]
 #![allow(
     clippy::must_use_candidate,
-    clippy::return_self_not_must_use
+    clippy::return_self_not_must_use,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation
 )]
 
 use thiserror::Error;
@@ -36,19 +39,6 @@ pub enum Error {
         dest_type: String,
         msg: String,
     },
-}
-
-pub trait ParseCoord {
-    fn parse_coord(value: &str) -> Result<Self, Error>
-    where Self: Sized;
-}
-
-pub fn from_str<S, T>(value: S) -> Result<T, Error>
-where 
-    S: AsRef<str>,
-    T: ParseCoord
-{
-    T::parse_coord(value.as_ref())
 }
 
 trait ThisOrThat {

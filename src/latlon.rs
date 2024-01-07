@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{Error, utm::{UtmUps, zonespec, self, central_meridian}, ThisOrThat, projections::{transverse_mercator::TransverseMercator, polar_stereographic::PolarStereographic}, mgrs::Mgrs, constants::WGS84_A};
+use crate::{Error, utm::UtmUps, mgrs::Mgrs};
 
 #[derive(Clone, Copy, Debug)]
 pub struct LatLon {
@@ -77,6 +77,22 @@ impl LatLon {
             lat1_r.cos() * lat2_r.cos() *
             ((other.longitude - self.longitude).to_radians() / 2.0).sin().powi(2)
         ).sqrt().asin()
+    }
+    
+    pub fn from_utmups(value: &UtmUps) -> LatLon {
+        value.to_latlon()
+    }
+    
+    pub fn to_utmups(&self) -> UtmUps {
+        UtmUps::from_latlon(self)
+    }
+
+    pub fn from_mgrs(value: &Mgrs) -> LatLon {
+        value.to_latlon()
+    }
+
+    pub fn to_mgrs(&self, precision: i32) -> Mgrs {
+        Mgrs::from_latlon(self, precision)
     }
 }
 

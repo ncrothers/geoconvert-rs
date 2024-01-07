@@ -1,6 +1,6 @@
-use std::{time::Instant, fs, str::FromStr};
+use std::{fs, str::FromStr};
 
-use geoconvert::{mgrs::Mgrs, ParseCoord, utm::UtmUps, latlon::LatLon};
+use geoconvert::{mgrs::Mgrs, utm::UtmUps, latlon::LatLon};
 use polars::prelude::*;
 
 fn test_mgrs_accuracy() {

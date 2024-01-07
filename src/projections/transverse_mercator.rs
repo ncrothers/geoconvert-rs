@@ -2,7 +2,7 @@ use std::f64::consts::PI;
 
 use num::{Complex, Integer};
 
-use crate::{latlon::LatLon, utility::{polyval, GeoMath, tauf, dms, taupf}, ThisOrThat, constants::{WGS84_A, WGS84_F, UTM_K0}, utm::UtmUps};
+use crate::{latlon::LatLon, utility::{polyval, GeoMath, dms}, ThisOrThat, constants::{WGS84_A, WGS84_F, UTM_K0}};
 
 // ================================
 // Transverse Mercator Constants
@@ -53,15 +53,11 @@ const F: f64 = WGS84_F;
 const M: usize = MAXPOW / 2;
 const N: f64 = F / (2.0 - F);
 const E2: f64 = F * (2.0 - F);
-const E2M: f64 = 1.0 - E2;
 
 pub(crate) struct TransverseMercator {
-    a: f64,
     k0: f64,
     es: f64,
-    c: f64,
     a1: f64,
-    b1: f64,
     alp: [f64; MAXPOW + 1],
     bet: [f64; MAXPOW + 1],
 }
@@ -70,7 +66,6 @@ impl TransverseMercator {
     pub fn utm() -> TransverseMercator {
 
         let es = (F < 0.0).ternary(-1.0, 1.0) * E2.abs().sqrt();
-        let c = E2M.sqrt() * 1_f64.eatanhe(es).exp();
 
         let b1 = polyval(&B1_COEFF[0..=M], N.powi(2)) / (B1_COEFF[M + 1] * (1.0 + N));
         // a1 is the equivalent radius for computing the circumference of
@@ -82,7 +77,7 @@ impl TransverseMercator {
 
         let mut o = 0;
         let mut d = N;
-        let mut m = MAXPOW / 2;
+        let mut m;
 
         for l in 1..=MAXPOW {
             m = MAXPOW - l;
@@ -93,17 +88,16 @@ impl TransverseMercator {
         }
 
         Self {
-            a: WGS84_A,
             k0: UTM_K0,
             es,
-            c,
             a1,
-            b1,
             alp,
             bet,
         }
     }
 
+    #[allow(clippy::wrong_self_convention)]
+    #[allow(clippy::similar_names)]
     pub fn from_latlon(&self, lon0: f64, lat: f64, lon: f64) -> (f64, f64) {
         let mut lat = lat;
         let mut lon = lon0.ang_diff(lon);
@@ -114,27 +108,27 @@ impl TransverseMercator {
         lat *= lat_sign;
         lon *= lon_sign;
 
-        let backside = lon > dms::QD as f64;
+        let backside = lon > f64::from(dms::QD);
 
         if backside {
             if lat.is_zero() {
                 lat_sign = -1.;
             }
 
-            lon = dms::HD as f64 - lon;
+            lon = f64::from(dms::HD) - lon;
         }
 
-        let (sphi, cphi) = lat.to_radians().sin_cos();
-        let (slam, clam) = lon.to_radians().sin_cos();
+        let (phi_sin, phi_cos) = lat.to_radians().sin_cos();
+        let (lamda_sin, lambda_cos) = lon.to_radians().sin_cos();
 
         // Check if lat == QD
-        let (etap, xip) = if lat.eps_eq(dms::QD as f64) {
+        let (etap, xip) = if lat.eps_eq(f64::from(dms::QD)) {
             (0.0, PI / 2.0)
         } else {
-            let tau = sphi / cphi;
-            let taup = taupf(tau, self.es);
-            let xip = taup.atan2(clam);
-            let etap = (slam / taup.hypot(clam)).asinh();
+            let tau = phi_sin / phi_cos;
+            let taup = tau.taupf(self.es);
+            let xip = taup.atan2(lambda_cos);
+            let etap = (lamda_sin / taup.hypot(lambda_cos)).asinh();
 
             (etap, xip)
         };
@@ -149,8 +143,6 @@ impl TransverseMercator {
 
         let mut y0 = Complex::new(n.is_odd().ternary_lazy( ||self.alp[n], || 0.0), 0.0);
         let mut y1 = Complex::default();
-        let mut z0 = Complex::new(n.is_odd().ternary_lazy(|| 2.0 * n as f64 * self.alp[n], || 0.0), 0.0);
-        let mut z1 = Complex::default();
 
         if n.is_odd() {
             n -= 1;
@@ -158,15 +150,12 @@ impl TransverseMercator {
 
         while n > 0 {
             y1 = a * y0 - y1 + self.alp[n];
-            z1 = a * z0 - z1 + 2.0 * n as f64 * self.alp[n];
             n -= 1;
             y0 = a * y1 - y0 + self.alp[n];
-            z0 = a * z1 - z0 + 2.0 * n as f64 * self.alp[n];
             n -= 1;
         }
 
         a /= 2.0;
-        z1 = 1.0 - z1 + a * z0;
         a = Complex::new(s0 * ch0, c0 * sh0);
         y1 = Complex::new(xip, etap) + a * y0;
 
@@ -178,6 +167,8 @@ impl TransverseMercator {
         (x, y)
     }
 
+    #[allow(clippy::many_single_char_names)]
+    #[allow(clippy::similar_names)]
     pub fn to_latlon(&self, lon_input: f64, x: f64, y: f64) -> LatLon {
         let mut xi = y / (self.a1 * self.k0);
         let mut eta = x / (self.a1 * self.k0);
@@ -203,8 +194,6 @@ impl TransverseMercator {
 
         let mut y0 = Complex::new(n.is_odd().ternary(-self.bet[n], 0.0), 0.0);
         let mut y1 = Complex::default();
-        let mut z0 = Complex::new(n.is_odd().ternary(-2.0 * n as f64 * self.bet[n], 0.0), 0.0);
-        let mut z1 = Complex::default();
 
         if n.is_odd() {
             n -= 1;
@@ -212,16 +201,13 @@ impl TransverseMercator {
 
         while n > 0 {
             y1 = a * y0 - y1 - self.bet[n];
-            z1 = a * z0 - z1 - 2.*(n as f64) * self.bet[n];
             n -= 1;
 
             y0 = a * y1 - y0 - self.bet[n];
-            z0 = a * z1 - z0 - 2.*(n as f64) * self.bet[n];
             n -= 1;
         }
 
         a /= 2.;
-        z1 = 1.0 - z1 + a * z0;
         a = Complex::new(s0 * ch0, c0 * sh0);
         y1 = Complex::new(xi, eta) + a * y0;
         // Ignoring k and gamma
@@ -234,11 +220,11 @@ impl TransverseMercator {
 
 
         let (mut lat, mut lon) = if r.is_zero() {
-            (dms::QD as f64, 0.0)
+            (f64::from(dms::QD), 0.0)
         } else {
             let lon = s.atan2(c).to_degrees();
             let sxip = xip.sin();
-            let tau = tauf(sxip / r, self.es);
+            let tau = (sxip / r).tauf(self.es);
 
 
             let lat = tau.atan().to_degrees();
@@ -248,7 +234,7 @@ impl TransverseMercator {
 
         lat *= xi_sign;
         if backside {
-            lon = dms::HD as f64 - lon;
+            lon = f64::from(dms::HD) - lon;
         }
         lon *= eta_sign;
         lon = (lon + lon_input).ang_normalize();

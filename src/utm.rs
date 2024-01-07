@@ -118,7 +118,6 @@ impl UtmUps {
         let utmp = zone != zonespec::UPS;
         let (mut x, mut y) = if utmp {
             let lon0 = central_meridian(zone);
-            let lon_diff = lon0.ang_diff(value.longitude);
 
             TransverseMercator::utm().from_latlon(lon0, value.latitude, value.longitude)
         } else {
@@ -142,16 +141,14 @@ impl UtmUps {
 
         let ind = utmp.ternary(2, 0) + self.northp.ternary(1, 0);
 
-        let x = self.easting - FALSE_EASTING[ind] as f64;
-        let y = self.northing - FALSE_NORTHING[ind] as f64;
+        let x = self.easting - f64::from(FALSE_EASTING[ind]);
+        let y = self.northing - f64::from(FALSE_NORTHING[ind]);
 
-        let coord = if utmp {
+        if utmp {
             TransverseMercator::utm().to_latlon(central_meridian(self.zone), x, y)
         } else {
             PolarStereographic::ups().to_latlon(self.northp, x, y)
-        };
-
-        coord
+        }
     }
 
     pub fn from_mgrs(value: &Mgrs) -> UtmUps {
@@ -167,7 +164,7 @@ impl UtmUps {
 }
 
 pub(crate) fn central_meridian(zone: i32) -> f64 {
-    6.0 * zone as f64 - 183.
+    6.0 * f64::from(zone) - 183.
 }
 
 // Map lat/lon to zone in either UTM or UPS based on position.
@@ -200,10 +197,10 @@ fn standard_zone(lat: f64, lon: f64, setzone: i32) -> i32 {
 }
 
 pub(crate) fn check_coords(utmp: bool, northp: bool, x: f64, y: f64, mgrs_limits: bool) -> Result<(), Error> {
-    let slop = mgrs::TILE as f64;
+    let slop = f64::from(mgrs::TILE);
 
     let ind = utmp.ternary(2, 0) + northp.ternary(1, 0);
-    if x < MIN_EASTING[ind] as f64 - slop || x > MAX_EASTING[ind] as f64 + slop {
+    if x < f64::from(MIN_EASTING[ind]) - slop || x > f64::from(MAX_EASTING[ind]) + slop {
         return Err(Error::InvalidUtmCoords(
             format!(
                 "Easting {:.2}km not in {}{} range for {} hemisphere [{:.2}km, {:.2}km]",
@@ -211,13 +208,13 @@ pub(crate) fn check_coords(utmp: bool, northp: bool, x: f64, y: f64, mgrs_limits
                 mgrs_limits.ternary("MGRS/", ""),
                 utmp.ternary("UTM", "UPS"),
                 northp.ternary("N", "S"),
-                (MIN_EASTING[ind] as f64 - slop) / 1000.0,
-                (MAX_EASTING[ind] as f64 + slop) / 1000.0,
+                (f64::from(MIN_EASTING[ind]) - slop) / 1000.0,
+                (f64::from(MAX_EASTING[ind]) + slop) / 1000.0,
             )
         ));
     }
 
-    if y < MIN_NORTHING[ind] as f64 - slop || y > MAX_NORTHING[ind] as f64 + slop {
+    if y < f64::from(MIN_NORTHING[ind]) - slop || y > f64::from(MAX_NORTHING[ind]) + slop {
         return Err(Error::InvalidUtmCoords(
             format!(
                 "Northing {:.2}km not in {}{} range for {} hemisphere [{:.2}km, {:.2}km]",
@@ -225,8 +222,8 @@ pub(crate) fn check_coords(utmp: bool, northp: bool, x: f64, y: f64, mgrs_limits
                 mgrs_limits.ternary("MGRS/", ""),
                 utmp.ternary("UTM", "UPS"),
                 northp.ternary("N", "S"),
-                (MIN_NORTHING[ind] as f64 - slop) / 1000.0,
-                (MAX_NORTHING[ind] as f64 + slop) / 1000.0,
+                (f64::from(MIN_NORTHING[ind]) - slop) / 1000.0,
+                (f64::from(MAX_NORTHING[ind]) + slop) / 1000.0,
             )
         ));
     }

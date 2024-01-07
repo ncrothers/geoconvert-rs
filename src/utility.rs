@@ -1,5 +1,3 @@
-use std::{ops::{Add, Sub, Neg, RemAssign}, f64::EPSILON};
-
 use crate::ThisOrThat;
 
 pub mod dms {
@@ -25,7 +23,7 @@ fn special_sum(u: f64, v: f64) -> (f64, f64) {
     let up = up - u;
     let vpp = vpp - v;
 
-    let t = if !s.is_zero() { -(up + vpp) } else { s };
+    let t = s.is_zero().ternary_lazy(||s, || -(up + vpp));
 
     (s, t)
 }
@@ -35,54 +33,6 @@ pub(crate) fn polyval(p: &[f64], x: f64) -> f64 {
     p
         .iter()
         .fold(0_f64, |acc, val| acc*x + val)
-}
-
-///
-/// Hypot of a given tau
-///
-/// # Arguments
-///
-/// * `tau: f64` - In radians
-/// * `es: f64` - In radians
-///
-pub(crate) fn taupf(tau: f64, es: f64) -> f64 {
-    let tau1: f64 = 1.0_f64.hypot(tau);
-    let sig = (tau / tau1).eatanhe(es).sinh();
-
-    1.0_f64.hypot(sig) * tau - sig * tau1
-}
-
-///
-/// Tau float comparison
-///
-/// # Arguments
-///
-/// * `tau: f64` - In radians
-/// * `es: f64` - In radians
-///
-pub(crate) fn tauf(taup: f64, es: f64) -> f64 {
-    let numit = 5;
-    let tol: f64 = EPSILON.sqrt() / 10.0;
-    let taumax = 2.0 / EPSILON.sqrt();
-
-    let e2m: f64 = 1.0 - es.powi(2);
-    let mut tau: f64 = if taup.abs() > 70.0 {
-        taup * 1_f64.eatanhe(es).exp()
-    } else {
-        taup / e2m
-    };
-
-    let stol: f64 = tol * taup.abs().max(1.0);
-    for _ in 0..numit {
-        let taupa: f64 = taupf(tau, es);
-        let dtau: f64 = (taup - taupa) * (1.0 + e2m * tau.powi(2))
-            / (e2m * 1.0_f64.hypot(tau) * 1.0_f64.hypot(taupa));
-        tau += dtau;
-        if dtau.abs() < stol {
-            break;
-        }
-    }
-    tau
 }
 
 pub(crate) trait GeoMath {
@@ -106,8 +56,8 @@ impl GeoMath for f64 {
     }
 
     fn ang_normalize(&self) -> f64 {
-        let value = self.remainder(dms::TD as f64);
-        let hd = dms::HD as f64;
+        let value = self.remainder(f64::from(dms::TD));
+        let hd = f64::from(dms::HD);
 
         if value.abs().eps_eq(hd) {
             hd.copysign(*self)
@@ -118,7 +68,7 @@ impl GeoMath for f64 {
     }
 
     fn ang_diff(&self, other: f64) -> f64 {
-        let td = dms::TD as f64;
+        let td = f64::from(dms::TD);
         // Use remainder instead of AngNormalize, since we treat boundary cases
         // later taking account of the error
         let (diff, err) = special_sum((-*self).remainder(td), other % td);
@@ -126,7 +76,7 @@ impl GeoMath for f64 {
         // apply remainder yet again.
         let (diff, err) = special_sum(diff.remainder(td), err);
         
-        let hd = dms::HD as f64;
+        let hd = f64::from(dms::HD);
         // Fix the sign if d = -180, 0, 180.
         if diff.is_zero() || diff.abs().eps_eq(hd) {
             // If e == 0, take sign from y - x
@@ -152,28 +102,28 @@ impl GeoMath for f64 {
     }
 
     fn taupf(&self, es: f64) -> f64 {
-        let tau1: f64 = 1.0_f64.hypot(*self);
+        let tau1 = 1.0_f64.hypot(*self);
         let sig = (*self / tau1).eatanhe(es).sinh();
 
         1.0_f64.hypot(sig) * *self - sig * tau1
     }
 
+    #[allow(clippy::similar_names)]
     fn tauf(&self, es: f64) -> f64 {
         let numit = 5;
-        let tol: f64 = EPSILON.sqrt() / 10.0;
-        let taumax = 2.0 / EPSILON.sqrt();
+        let tol = f64::EPSILON.sqrt() / 10.0;
 
-        let e2m: f64 = 1.0 - es.powi(2);
-        let mut tau: f64 = if self.abs() > 70.0 {
+        let e2m = 1.0 - es.powi(2);
+        let mut tau = if self.abs() > 70.0 {
             self * 1_f64.eatanhe(es).exp()
         } else {
             self / e2m
         };
 
-        let stol: f64 = tol * self.abs().max(1.0);
+        let stol = tol * self.abs().max(1.0);
         for _ in 0..numit {
-            let taupa: f64 = taupf(tau, es);
-            let dtau: f64 = (self - taupa) * (1.0 + e2m * tau.powi(2))
+            let taupa = tau.taupf(es);
+            let dtau = (self - taupa) * (1.0 + e2m * tau.powi(2))
                 / (e2m * 1.0_f64.hypot(tau) * 1.0_f64.hypot(taupa));
             tau += dtau;
             if dtau.abs() < stol {
