@@ -1,6 +1,7 @@
 use crate::ThisOrThat;
 
-pub mod dms {
+#[allow(dead_code)]
+pub(crate) mod dms {
     /// Degrees per quarter turn
     pub const QD: i32 = 90;
     /// Minutes per degree

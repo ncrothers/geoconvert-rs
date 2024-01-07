@@ -17,7 +17,7 @@ mod coords {
 
 pub use coords::*;
 
-pub mod utility;
+pub(crate) mod utility;
 
 pub use latlon::LatLon;
 pub use mgrs::Mgrs;
