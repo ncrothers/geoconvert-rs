@@ -1,65 +1,65 @@
 use std::{fs, str::FromStr};
 
 use geoconvert::{mgrs::Mgrs, utm::UtmUps, latlon::LatLon};
-use polars::prelude::*;
+// use polars::prelude::*;
 
-fn test_mgrs_accuracy() {
-    let mgrs_points = fs::read_to_string("./helpers/output_mgrs.txt")
-        .unwrap();
-    let mgrs_points = mgrs_points
-        .lines()
-        .map(|line| line.trim());
-    let latlon_points = fs::read_to_string("./helpers/output_latlon.txt")
-        .unwrap();
-    let latlon_points = latlon_points
-        .lines()
-        .map(|line| {
-            let mut pieces = line.split(' ');
-            LatLon::create(
-                pieces.next().unwrap().parse().unwrap(),
-                pieces.next().unwrap().parse().unwrap()
-            ).unwrap()
-        });
+// fn test_mgrs_accuracy() {
+//     let mgrs_points = fs::read_to_string("./helpers/output_mgrs.txt")
+//         .unwrap();
+//     let mgrs_points = mgrs_points
+//         .lines()
+//         .map(|line| line.trim());
+//     let latlon_points = fs::read_to_string("./helpers/output_latlon.txt")
+//         .unwrap();
+//     let latlon_points = latlon_points
+//         .lines()
+//         .map(|line| {
+//             let mut pieces = line.split(' ');
+//             LatLon::create(
+//                 pieces.next().unwrap().parse().unwrap(),
+//                 pieces.next().unwrap().parse().unwrap()
+//             ).unwrap()
+//         });
 
-    let mgrs_vec = mgrs_points.clone().collect::<Vec<_>>();
-    let true_latlon = latlon_points.clone().map(|x| x.to_string()).collect::<Vec<_>>();
+//     let mgrs_vec = mgrs_points.clone().collect::<Vec<_>>();
+//     let true_latlon = latlon_points.clone().map(|x| x.to_string()).collect::<Vec<_>>();
 
-    let count = mgrs_points.clone().count();
+//     let count = mgrs_points.clone().count();
 
-    let preds = mgrs_points
-        .clone()
-        .map(|mgrs | {
-            let val = Mgrs::from_str(mgrs).unwrap();
-            val.to_latlon().to_string()
-        })
-        .collect::<Vec<_>>();
+//     let preds = mgrs_points
+//         .clone()
+//         .map(|mgrs | {
+//             let val = Mgrs::from_str(mgrs).unwrap();
+//             val.to_latlon().to_string()
+//         })
+//         .collect::<Vec<_>>();
 
-    let errors = mgrs_points
-        .zip(latlon_points)
-        .map(|(mgrs, latlon)| {
-            let val = Mgrs::from_str(mgrs).unwrap();
-            let coord = val.to_latlon();
+//     let errors = mgrs_points
+//         .zip(latlon_points)
+//         .map(|(mgrs, latlon)| {
+//             let val = Mgrs::from_str(mgrs).unwrap();
+//             let coord = val.to_latlon();
     
-            coord.haversine(&latlon)
-        })
-        .collect::<Vec<_>>();
+//             coord.haversine(&latlon)
+//         })
+//         .collect::<Vec<_>>();
 
-    let source = Series::new("mgrs", &mgrs_vec);
-    let pred = Series::new("pred", &preds);
-    let trues = Series::new("true", &true_latlon);
-    let distance = Series::new("distance", &errors);
+//     let source = Series::new("mgrs", &mgrs_vec);
+//     let pred = Series::new("pred", &preds);
+//     let trues = Series::new("true", &true_latlon);
+//     let distance = Series::new("distance", &errors);
 
-    let df = DataFrame::new(vec![source, pred, trues, distance]).unwrap();
-    let df = df.filter(&df.column("distance").unwrap().gt(-1.0).unwrap()).unwrap();
+//     let df = DataFrame::new(vec![source, pred, trues, distance]).unwrap();
+//     let df = df.filter(&df.column("distance").unwrap().gt(-1.0).unwrap()).unwrap();
     
-    let df = df.sort(["distance"], false, false).unwrap();
+//     let df = df.sort(["distance"], false, false).unwrap();
     
-    println!("{:?}", df);
+//     println!("{:?}", df);
 
-    // println!("Median: {}", df.column("distance").median().unwrap());
-    // println!("Min: {}, Max: {}", errors.min::<f64>().unwrap().unwrap(), errors.max::<f64>().unwrap().unwrap());
-    // println!("Mean: {}", errors.mean().unwrap());
-}
+//     // println!("Median: {}", df.column("distance").median().unwrap());
+//     // println!("Min: {}, Max: {}", errors.min::<f64>().unwrap().unwrap(), errors.max::<f64>().unwrap().unwrap());
+//     // println!("Mean: {}", errors.mean().unwrap());
+// }
 
 fn test_mgrs_parsing_accuracy() {
     let mgrs_points = fs::read_to_string("./helpers/output_mgrs.txt")
@@ -128,7 +128,7 @@ fn test_mgrs() {
 }
 
 fn main() {
-    test_mgrs_accuracy();
+    // test_mgrs_accuracy();
     test_mgrs_parsing_accuracy();
     test_mgrs_latlon_and_back_accuracy();
 }

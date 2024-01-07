@@ -3,7 +3,7 @@ use std::{fmt::Display, str::FromStr};
 use lazy_static::lazy_static;
 use num::Integer;
 
-use crate::{Error, utm::{zonespec::{MINUTMZONE, MAXUTMZONE, UPS}, UtmUps}, utility::{dms, GeoMath}, ThisOrThat, latlon::LatLon};
+use crate::{Error, utm::{zonespec::{MINUTMZONE, MAXUTMZONE, UPS, self}, UtmUps}, utility::{dms, GeoMath}, ThisOrThat, latlon::LatLon};
 
 const HEMISPHERES: &str = "SN";
 const UTMCOLS: &[&str] = &["ABCDEFGH", "JKLMNPQR", "STUVWXYZ"];
@@ -14,20 +14,20 @@ const LATBAND: &str = "CDEFGHJKLMNPQRSTUVWX";
 const UPSBAND: &str = "ABYZ";
 const DIGITS: &str = "0123456789";
 
-pub const TILE: i32= 100_000;
-pub const MINUTMCOL: i32= 1;
-pub const MAXUTMCOL: i32= 9;
-pub const MINUTM_S_ROW: i32= 10;
-pub const MAXUTM_S_ROW: i32= 100;
-pub const MINUTM_N_ROW: i32= 0;
-pub const MAXUTM_N_ROW: i32= 95;
-pub const MINUPS_S_IND: i32= 8;
-pub const MAXUPS_S_IND: i32= 32;
-pub const MINUPS_N_IND: i32= 13;
-pub const MAXUPS_N_IND: i32= 27;
-pub const UPSEASTING: i32= 20;
-pub const UTMEASTING: i32= 5;
-pub const UTM_N_SHIFT: i32= (MAXUTM_S_ROW - MINUTM_N_ROW) * TILE;
+pub(crate) const TILE: i32= 100_000;
+pub(crate) const MINUTMCOL: i32= 1;
+pub(crate) const MAXUTMCOL: i32= 9;
+pub(crate) const MINUTM_S_ROW: i32= 10;
+pub(crate) const MAXUTM_S_ROW: i32= 100;
+pub(crate) const MINUTM_N_ROW: i32= 0;
+pub(crate) const MAXUTM_N_ROW: i32= 95;
+pub(crate) const MINUPS_S_IND: i32= 8;
+pub(crate) const MAXUPS_S_IND: i32= 32;
+pub(crate) const MINUPS_N_IND: i32= 13;
+pub(crate) const MAXUPS_N_IND: i32= 27;
+pub(crate) const UPSEASTING: i32= 20;
+pub(crate) const UTMEASTING: i32= 5;
+pub(crate) const UTM_N_SHIFT: i32= (MAXUTM_S_ROW - MINUTM_N_ROW) * TILE;
 
 const MIN_EASTING: [i32; 4] = [
     MINUPS_S_IND,
@@ -57,51 +57,214 @@ const MAX_NORTHING: [i32; 4] = [
     MAXUTM_N_ROW,
 ];
 
-pub const BASE: i32= 10;
-pub const TILE_LEVEL: i32= 5;
-pub const UTM_ROW_PERIOD: i32 = 20;
-pub const UTM_EVEN_ROW_SHIFT: i32= 5;
-pub const MAX_PRECISION: i32= 5 + 6;
-pub const MULT: i32= 1_000_000;
+pub(crate) const BASE: i32= 10;
+pub(crate) const UTM_ROW_PERIOD: i32 = 20;
+pub(crate) const UTM_EVEN_ROW_SHIFT: i32= 5;
+pub(crate) const MAX_PRECISION: i32= 5 + 6;
+pub(crate) const MULT: i32= 1_000_000;
 
+/// Representation of a WGS84 
+/// [Military Grid Reference System](https://en.wikipedia.org/wiki/Military_Grid_Reference_System)
+/// point. Stored internally as a [`UtmUps`] point with a precision.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mgrs {
+    #[cfg_attr(feature = "serde", serde(flatten))]
     pub(crate) utm: UtmUps,
     pub(crate) precision: i32,
 }
 
 impl Mgrs {
+    /// Tries to create a MGRS point from its constituent parts. Validates the
+    /// arguments to ensure a valid MGRS point can be created. You most likely
+    /// want to instantiate this via [`parse_str`](#method.parse_str) or [`UtmUps`] instead
+    /// of manually specifying the values.
+    /// 
+    /// # Errors
+    /// 
+    /// Returns [`Error::InvalidMgrs`] if the position is invalid.
+    /// Returns [`Error::InvalidPrecision`] if the precision is not in range `[1, 11]`.
+    /// 
+    /// # Usage
+    /// 
+    /// ```
+    /// use geoconvert::Mgrs;
+    /// 
+    /// let coord = Mgrs::create(18, true, 585664.121, 4511315.422, 6);
+    /// 
+    /// assert!(coord.is_ok());
+    /// 
+    /// let coord = coord.unwrap();
+    /// 
+    /// assert_eq!(coord.zone(), 18);
+    /// assert_eq!(coord.is_north(), true);
+    /// assert!((coord.easting() - 585664.121).abs() < 1e-3);
+    /// assert!((coord.northing() - 4511315.422).abs() < 1e-3);
+    /// assert_eq!(coord.precision(), 6);
+    /// 
+    /// let invalid_coord_zone_neg = Mgrs::create(-10, true, 585664.121, 4511315.422, 6);
+    /// assert!(invalid_coord_zone_neg.is_err());
+    /// 
+    /// let invalid_coord_zone_too_big = Mgrs::create(70, true, 585664.121, 4511315.422, 6);
+    /// assert!(invalid_coord_zone_too_big.is_err());
+    /// ```
+    pub fn create(zone: i32, northp: bool, easting: f64, northing: f64, precision: i32) -> Result<Mgrs, Error> {
+        // Make sure zone is a valid value
+        if !(zonespec::MINZONE..=zonespec::MAXZONE).contains(&zone) {
+            return Err(Error::InvalidZone(zone));
+        }
+
+        let utmp = zone != zonespec::UPS;
+
+        check_coords(utmp, northp, easting, northing)?;
+
+        Ok(Mgrs {
+            utm: UtmUps::new(zone, northp, easting, northing),
+            precision,
+        })
+    }
+
+    /// Returns whether the MGRS is stored as UTM or UPS.
+    /// 
+    /// # Example
+    /// ```
+    /// use geoconvert::Mgrs;
+    /// 
+    /// let coord = Mgrs::parse_str("18TWL856641113154").unwrap();
+    /// assert_eq!(coord.is_utm(), true);
+    /// ```
+    #[inline]
     pub fn is_utm(&self) -> bool {
         self.utm.zone != UPS
     }
 
+    /// Returns the UTM zone.
+    /// 
+    /// # Example
+    /// ```
+    /// use geoconvert::Mgrs;
+    /// 
+    /// let coord = Mgrs::parse_str("18TWL856641113154").unwrap();
+    /// assert_eq!(coord.zone(), 18);
+    /// ```
+    #[inline]
     pub fn zone(&self) -> i32 {
         self.utm.zone
     }
 
+    /// Returns whether the coordinate is in the northern hemisphere.
+    /// 
+    /// # Example
+    /// ```
+    /// use geoconvert::Mgrs;
+    /// 
+    /// let coord = Mgrs::parse_str("18TWL856641113154").unwrap();
+    /// assert_eq!(coord.is_north(), true);
+    /// ```
+    #[inline]
     pub fn is_north(&self) -> bool {
         self.utm.northp
     }
 
+    /// Returns the UTM easting.
+    /// 
+    /// # Example
+    /// ```
+    /// use geoconvert::Mgrs;
+    /// 
+    /// let coord = Mgrs::parse_str("18TWL856641113154").unwrap();
+    /// assert!((coord.easting() - 585664.15).abs() < 1e-2);
+    /// ```
+    #[inline]
     pub fn easting(&self) -> f64 {
         self.utm.easting
     }
 
+    /// Returns the UTM northing.
+    /// 
+    /// # Example
+    /// ```
+    /// use geoconvert::Mgrs;
+    /// 
+    /// let coord = Mgrs::parse_str("18TWL856641113154").unwrap();
+    /// assert!((coord.northing() - 4511315.45).abs() < 1e-2);
+    /// ```
+    #[inline]
     pub fn northing(&self) -> f64 {
         self.utm.northing
     }
 
+    /// Returns the current precision for outputting to a string.
+    /// 
+    /// # Example
+    /// ```
+    /// use geoconvert::Mgrs;
+    /// 
+    /// let coord = Mgrs::parse_str("18TWL856641113154").unwrap();
+    /// assert_eq!(coord.precision(), 6);
+    /// ```
+    #[inline]
     pub fn precision(&self) -> i32 {
         self.precision
     }
 
-    /// TODO
+    /// Set the precision.
+    /// 
+    /// Must be in range `[1, 11]`.
     /// 
     /// # Errors
+    /// 
+    /// * [`Error::InvalidPrecision`]: `precision` is not in the valid range
+    /// 
+    /// # Example
+    /// ```
+    /// use geoconvert::Mgrs;
+    /// 
+    /// let mut coord = Mgrs::parse_str("18TWL856641113154").unwrap();
+    /// coord.set_precision(7);
+    /// 
+    /// assert_eq!(coord.precision(), 7);
+    /// ```
+    #[inline]
+    pub fn set_precision(&mut self, precision: i32) -> Result<(), Error> {
+        if !(1..=11).contains(&precision) {
+            return Err(Error::InvalidPrecision(precision));
+        }
+
+        self.precision = precision;
+        Ok(())
+    }
+
+    /// Parses a string as MGRS. Assumes the string is _only_ composed of
+    /// the MGRS coordinate (e.g. no preceding/trailing whitespace) and there
+    /// are no spaces in the string. Example valid strings:
+    /// 
+    /// * `27UXQ0314512982`
+    /// * `YXL6143481146`
+    /// 
+    /// # Errors
+    /// 
+    /// * [`Error::InvalidMgrs`]: the string couldn't be parsed to a valid MGRS coordinate.
     pub fn parse_str(mgrs_str: &str) -> Result<Mgrs, Error> {
         Self::from_str(mgrs_str)
     }
 
+    /// Converts from [`Mgrs`] to [`LatLon`]
+    /// 
+    /// # Usage
+    /// 
+    /// ```
+    /// use geoconvert::{LatLon, Mgrs};
+    /// 
+    /// let coord = LatLon::create(40.748333, -73.985278).unwrap();
+    /// let coord_mgrs = Mgrs::parse_str("18TWL856641113154").unwrap();
+    /// 
+    /// let converted = LatLon::from_mgrs(&coord_mgrs);
+    /// 
+    /// // Check if the converted coordinate is accurate to 6 decimals (same as reference)
+    /// assert!((converted.latitude() - coord.latitude()).abs() < 1e-6);
+    /// assert!((converted.longitude() - coord.longitude()).abs() < 1e-6);
+    /// ```
     pub fn from_latlon(value: &LatLon, precision: i32) -> Mgrs {
         Mgrs {
             utm: UtmUps::from_latlon(value),
@@ -109,18 +272,69 @@ impl Mgrs {
         }
     }
 
+    /// Converts from [`LatLon`] to [`Mgrs`]
+    /// 
+    /// # Usage
+    /// 
+    /// ```
+    /// use geoconvert::{LatLon, Mgrs};
+    /// 
+    /// let coord = LatLon::create(40.748333, -73.985278).unwrap();
+    /// 
+    /// let converted = coord.to_mgrs(6);
+    /// 
+    /// assert_eq!(converted.to_string(), "18TWL856641113154");
+    /// ```
     pub fn to_latlon(&self) -> LatLon {
         self.utm.to_latlon()
     }
 
-    pub fn from_utm(value: &UtmUps, precision: i32) -> Mgrs {
+    
+    /// Converts from [`UtmUps`] to [`Mgrs`]
+    /// 
+    /// # Usage
+    /// 
+    /// ```
+    /// use geoconvert::{Mgrs, UtmUps};
+    /// 
+    /// let coord = Mgrs::parse_str("18TWL856641113154").unwrap();
+    /// let coord_utm = UtmUps::create(18, true, 585664.15, 4511315.45).unwrap();
+    /// 
+    /// let converted = Mgrs::from_utmups(&coord_utm, 6);
+    /// 
+    /// // Check if the converted coordinate is accurate to 6 decimals (same as reference)
+    /// assert_eq!(coord.zone(), converted.zone());
+    /// assert_eq!(coord.is_north(), converted.is_north());
+    /// assert!((coord.easting() - converted.easting()).abs() < 1e-2);
+    /// assert!((coord.northing() - converted.northing()).abs() < 1e-2);
+    /// assert_eq!(coord.precision(), converted.precision());
+    /// ```
+    pub fn from_utmups(value: &UtmUps, precision: i32) -> Mgrs {
         Mgrs {
             utm: *value,
             precision,
         }
     }
 
-    pub fn to_utm(&self) -> UtmUps {
+    /// Converts from [`Mgrs`] to [`UtmUps`]
+    /// 
+    /// # Usage
+    /// 
+    /// ```
+    /// use geoconvert::{Mgrs, UtmUps};
+    /// 
+    /// let coord = Mgrs::parse_str("18TWL856641113154").unwrap();
+    /// let coord_utm = UtmUps::create(18, true, 585664.15, 4511315.45).unwrap();
+    /// 
+    /// let converted = coord.to_utmups();
+    /// 
+    /// // Check if the converted coordinate is accurate to 6 decimals (same as reference)
+    /// assert_eq!(coord_utm.zone(), converted.zone());
+    /// assert_eq!(coord_utm.is_north(), converted.is_north());
+    /// assert!((coord_utm.easting() - converted.easting()).abs() < 1e-2);
+    /// assert!((coord_utm.northing() - converted.northing()).abs() < 1e-2);
+    /// ```
+    pub fn to_utmups(&self) -> UtmUps {
         self.utm
     }
 }
@@ -483,13 +697,12 @@ impl Display for Mgrs {
         
         // Other Forward call
         let utmp = self.utm.zone != 0;
-        // TODO: Check coords on creation rather than in infallible methods like fmt()
         let (northp, easting, northing) = check_coords(utmp, self.utm.northp, self.utm.easting, self.utm.northing)
             .map_err(|e| {
                 println!("UTM: {:?}", self.utm);
                 e
             })
-            .expect("Invalid coords");
+            .expect("Invalid coords; please report this to the library author");
         // Create pre-allocated string of the correct length
         let mut mgrs_str = [0u8; 2 + 3 + 2*MAX_PRECISION as usize];
         let zone = self.utm.zone - 1;

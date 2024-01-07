@@ -1,15 +1,15 @@
 use crate::{latlon::LatLon, utility::{dms, GeoMath}, mgrs::{to_latitude_band, self, Mgrs}, Error, ThisOrThat, projections::{transverse_mercator::TransverseMercator, polar_stereographic::PolarStereographic}};
 
-pub mod zonespec {
-    pub const INVALID: i32 = -4;
-    pub const MATCH: i32 = -3;
-    pub const UTM: i32 = -2;
-    pub const STANDARD: i32 = -1;
-    pub const UPS: i32 = 0;
-    pub const MINZONE: i32 = 0;
-    pub const MINUTMZONE: i32 = 1;
-    pub const MAXUTMZONE: i32 = 60;
-    pub const MAXZONE: i32 = 60;
+pub(crate) mod zonespec {
+    pub(crate) const INVALID: i32 = -4;
+    pub(crate) const _MATCH: i32 = -3;
+    pub(crate) const UTM: i32 = -2;
+    pub(crate) const STANDARD: i32 = -1;
+    pub(crate) const UPS: i32 = 0;
+    pub(crate) const MINZONE: i32 = 0;
+    pub(crate) const MINUTMZONE: i32 = 1;
+    pub(crate) const MAXUTMZONE: i32 = 60;
+    pub(crate) const MAXZONE: i32 = 60;
 }
 
 const FALSE_EASTING: [i32; 4] = [
@@ -54,16 +54,27 @@ const MAX_NORTHING: [i32; 4] = [
     mgrs::MAXUTM_N_ROW * mgrs::TILE,
 ];
 
+/// Representation of a WGS84 
+/// [UTM](https://en.wikipedia.org/wiki/Universal_Transverse_Mercator_coordinate_system)
+/// /
+/// [UPS](https://en.wikipedia.org/wiki/Universal_polar_stereographic_coordinate_system) 
+/// point. If converted to from lat/lon, it will
+/// automatically determine whether it should be UTM/UPS. It becomes a UPS coordinate
+/// if the latitude is outside the range `[-84,84]`. A zone value of `0`
+/// designates UPS.
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UtmUps {
     pub(crate) zone: i32,
+    #[cfg_attr(feature = "serde", serde(alias = "north", alias = "is_north"))]
     pub(crate) northp: bool,
     pub(crate) easting: f64,
     pub(crate) northing: f64,
 }
 
 impl UtmUps {
+    /// Internal-only constructor that doesn't check the coordinate
     pub(crate) fn new(zone: i32, northp: bool, easting: f64, northing: f64) -> UtmUps {
         Self {
             zone,
@@ -73,17 +84,40 @@ impl UtmUps {
         }
     }
 
-    /// TODO
+    /// Tries to create a UTM or UPS point from its constituent parts. Zone
+    /// of `0` designates UPS, otherwise it is UTM.
     /// 
     /// # Errors
+    /// 
+    /// Returns [`Error::InvalidZone`] if the zone is outside the range `[0, 60]`.
+    /// Returns [`Error::InvalidCoord`] if the coordinate is otherwise invalid.
+    /// 
+    /// # Usage
+    /// 
+    /// ```
+    /// use geoconvert::UtmUps;
+    /// 
+    /// let coord = UtmUps::create(18, true, 585664.121, 4511315.422);
+    /// 
+    /// assert!(coord.is_ok());
+    /// 
+    /// let coord = coord.unwrap();
+    /// 
+    /// assert_eq!(coord.zone(), 18);
+    /// assert_eq!(coord.is_north(), true);
+    /// assert!((coord.easting() - 585664.121).abs() < 1e-3);
+    /// assert!((coord.northing() - 4511315.422).abs() < 1e-3);
+    /// 
+    /// let invalid_coord_zone_neg = UtmUps::create(-10, true, 585664.121, 4511315.422);
+    /// assert!(invalid_coord_zone_neg.is_err());
+    /// 
+    /// let invalid_coord_zone_too_big = UtmUps::create(70, true, 585664.121, 4511315.422);
+    /// assert!(invalid_coord_zone_too_big.is_err());
+    /// ```
     pub fn create(zone: i32, northp: bool, easting: f64, northing: f64) -> Result<UtmUps, Error> {
         // Make sure zone is a valid value
         if !(zonespec::MINZONE..=zonespec::MAXZONE).contains(&zone) {
-            return Err(Error::InvalidRange {
-                coord_type: "Utm".to_string(),
-                dest_type: "LatLon".to_string(),
-                msg: format!("Zone {zone} not in range [0, 60]")
-            });
+            return Err(Error::InvalidZone(zone));
         }
 
         let utmp = zone != zonespec::UPS;
@@ -93,22 +127,76 @@ impl UtmUps {
         Ok(UtmUps::new(zone, northp, easting, northing))
     }
 
+    /// Returns the UTM zone.
+    /// 
+    /// # Example
+    /// ```
+    /// use geoconvert::UtmUps;
+    /// 
+    /// let coord = UtmUps::create(18, true, 585664.121, 4511315.422).unwrap();
+    /// assert_eq!(coord.zone(), 18);
+    /// ```
     pub fn zone(&self) -> i32 {
         self.zone
     }
 
+    /// Returns whether the coordinate is in the northern hemisphere.
+    /// 
+    /// # Example
+    /// ```
+    /// use geoconvert::UtmUps;
+    /// 
+    /// let coord = UtmUps::create(18, true, 585664.121, 4511315.422).unwrap();
+    /// assert_eq!(coord.is_north(), true);
+    /// ```
     pub fn is_north(&self) -> bool {
         self.northp
     }
 
+    /// Returns the UTM easting.
+    /// 
+    /// # Example
+    /// ```
+    /// use geoconvert::UtmUps;
+    /// 
+    /// let coord = UtmUps::create(18, true, 585664.121, 4511315.422).unwrap();
+    /// assert!((coord.easting() - 585664.121).abs() < 1e-3);
+    /// ```
     pub fn easting(&self) -> f64 {
         self.easting
     }
 
+    /// Returns the UTM northing.
+    /// 
+    /// # Example
+    /// ```
+    /// use geoconvert::UtmUps;
+    /// 
+    /// let coord = UtmUps::create(18, true, 585664.121, 4511315.422).unwrap();
+    /// assert!((coord.northing() - 4511315.422).abs() < 1e-3);
+    /// ```
     pub fn northing(&self) -> f64 {
         self.northing
     }
 
+    /// Converts from [`LatLon`] to [`UtmUps`]
+    /// 
+    /// # Usage
+    /// 
+    /// ```
+    /// use geoconvert::{LatLon, UtmUps};
+    /// 
+    /// let coord = LatLon::create(40.748333, -73.985278).unwrap();
+    /// let coord_utm = UtmUps::create(18, true, 585664.121, 4511315.422).unwrap();
+    /// 
+    /// let converted = coord.to_utmups();
+    /// 
+    /// assert_eq!(converted.zone(), coord_utm.zone());
+    /// assert_eq!(converted.is_north(), coord_utm.is_north());
+    /// // Check if the converted coordinate is accurate to 3 decimals (same as reference)
+    /// assert!((converted.easting() - coord_utm.easting()).abs() < 1e-3);
+    /// assert!((converted.northing() - coord_utm.northing()).abs() < 1e-3);
+    /// ```
     pub fn from_latlon(value: &LatLon) -> UtmUps {
         let northp = value.is_north();
         // STANDARD specifies, by default, interpret whether it should be UTM or UPS
@@ -136,6 +224,22 @@ impl UtmUps {
         }
     }
 
+    /// Converts from [`UtmUps`] to [`LatLon`]
+    /// 
+    /// # Usage
+    /// 
+    /// ```
+    /// use geoconvert::{LatLon, UtmUps};
+    /// 
+    /// let coord = LatLon::create(40.748333, -73.985278).unwrap();
+    /// let coord_utm = UtmUps::create(18, true, 585664.121, 4511315.422).unwrap();
+    /// 
+    /// let converted = LatLon::from_utmups(&coord_utm);
+    /// 
+    /// // Check if the converted coordinate is accurate to 6 decimals (same as reference)
+    /// assert!((converted.latitude() - coord.latitude()).abs() < 1e-6);
+    /// assert!((converted.longitude() - coord.longitude()).abs() < 1e-6);
+    /// ```
     pub fn to_latlon(&self) -> LatLon {
         let utmp = self.zone != zonespec::UPS;
 
@@ -151,10 +255,47 @@ impl UtmUps {
         }
     }
 
+    /// Converts from [`Mgrs`] to [`UtmUps`]
+    /// 
+    /// # Usage
+    /// 
+    /// ```
+    /// use geoconvert::{Mgrs, UtmUps};
+    /// 
+    /// let coord = Mgrs::parse_str("18TWL856641113154").unwrap();
+    /// let coord_utm = UtmUps::create(18, true, 585664.15, 4511315.45).unwrap();
+    /// 
+    /// let converted = coord.to_utmups();
+    /// 
+    /// // Check if the converted coordinate is accurate to 6 decimals (same as reference)
+    /// assert_eq!(coord_utm.zone(), converted.zone());
+    /// assert_eq!(coord_utm.is_north(), converted.is_north());
+    /// assert!((coord_utm.easting() - converted.easting()).abs() < 1e-2);
+    /// assert!((coord_utm.northing() - converted.northing()).abs() < 1e-2);
+    /// ```
     pub fn from_mgrs(value: &Mgrs) -> UtmUps {
         value.utm
     }
-    
+
+    /// Converts from [`UtmUps`] to [`Mgrs`]
+    /// 
+    /// # Usage
+    /// 
+    /// ```
+    /// use geoconvert::{Mgrs, UtmUps};
+    /// 
+    /// let coord = Mgrs::parse_str("18TWL856641113154").unwrap();
+    /// let coord_utm = UtmUps::create(18, true, 585664.15, 4511315.45).unwrap();
+    /// 
+    /// let converted = Mgrs::from_utmups(&coord_utm, 6);
+    /// 
+    /// // Check if the converted coordinate is accurate to 6 decimals (same as reference)
+    /// assert_eq!(coord.zone(), converted.zone());
+    /// assert_eq!(coord.is_north(), converted.is_north());
+    /// assert!((coord.easting() - converted.easting()).abs() < 1e-2);
+    /// assert!((coord.northing() - converted.northing()).abs() < 1e-2);
+    /// assert_eq!(coord.precision(), converted.precision());
+    /// ```
     pub fn to_mgrs(&self, precision: i32) -> Mgrs {
         Mgrs {
             utm: *self,
@@ -229,4 +370,17 @@ pub(crate) fn check_coords(utmp: bool, northp: bool, x: f64, y: f64, mgrs_limits
     }
 
     Ok(())
+}
+
+impl std::fmt::Display for UtmUps {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}{} {} {}",
+            self.zone,
+            self.northp.ternary("n", "s"),
+            self.easting,
+            self.northing
+        )
+    }
 }

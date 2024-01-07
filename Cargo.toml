@@ -1,15 +1,15 @@
 [package]
 name = "geoconvert"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# geomorph = "1.1.0"
 lazy_static = "1.4.0"
 num = "0.4.1"
-polars = "0.36.2"
-serde = { version = "1.0.192", features = ["derive"] }
-serde_json = "1.0.108"
+serde = { version = "1.0.192", features = ["derive"], optional = true }
 thiserror = "1.0.50"
+
+[features]
+serde = ["dep:serde"]
