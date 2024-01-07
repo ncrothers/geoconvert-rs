@@ -1,5 +1,8 @@
 [package]
 name = "geoconvert"
+description = "A lightweight library to convert between geographic coordinate systems"
+authors = ["Nicholas Crothers <ncrothers523@gmail.com>"]
+license = "MIT"
 version = "1.0.0"
 edition = "2021"
 
