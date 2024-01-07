@@ -9,9 +9,14 @@
 
 use thiserror::Error;
 
-pub mod latlon;
-pub mod mgrs;
-pub mod utm;
+mod coords {
+    pub mod latlon;
+    pub mod mgrs;
+    pub mod utm;
+}
+
+pub use coords::*;
+
 pub mod utility;
 
 pub use latlon::LatLon;
