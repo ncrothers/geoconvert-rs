@@ -1,5 +1,11 @@
 # geoconvert
 
+[![Latest Version](https://img.shields.io/crates/v/geoconvert.svg)](crates.io])
+[![Docs](https://docs.rs/geoconvert/badge.svg)](docs.rs])
+
+[crates.io]: https://crates.io/crates/geoconvert
+[docs.rs]: https://docs.rs/geoconvert
+
 `geoconvert` is a lightweight library for converting between different
 geographic coordinate systems. Currently, there are three coordinate systems implemented:
 

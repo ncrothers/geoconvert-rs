@@ -3,6 +3,7 @@ name = "geoconvert"
 description = "A lightweight library to convert between geographic coordinate systems"
 authors = ["Nicholas Crothers <ncrothers523@gmail.com>"]
 license = "MIT"
+repository = "https://github.com/ncrothers/geoconvert-rs"
 version = "1.0.0"
 edition = "2021"
 
