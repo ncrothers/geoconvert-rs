@@ -1,7 +1,7 @@
 # geoconvert
 
-[![Latest Version](https://img.shields.io/crates/v/geoconvert.svg)](crates.io])
-[![Docs](https://docs.rs/geoconvert/badge.svg)](docs.rs])
+[![Latest Version](https://img.shields.io/crates/v/geoconvert.svg)][crates.io]
+[![Docs](https://docs.rs/geoconvert/badge.svg)][docs.rs]
 
 [crates.io]: https://crates.io/crates/geoconvert
 [docs.rs]: https://docs.rs/geoconvert
