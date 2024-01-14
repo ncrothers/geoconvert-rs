@@ -208,11 +208,13 @@ impl LatLon {
 
 impl Display for LatLon {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut buf = ryu::Buffer::new();
+        let lat = buf.format(self.latitude);
+        let mut buf = ryu::Buffer::new();
+        let lon = buf.format(self.longitude);
         write!(
             f,
-            "{} {}",
-            self.latitude,
-            self.longitude,
+            "{lat} {lon}",
         )
     }
 }

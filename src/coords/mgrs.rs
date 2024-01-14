@@ -419,6 +419,9 @@ impl FromStr for Mgrs {
         let value = s.to_ascii_uppercase();
         let mut p = 0;
         let len = value.len();
+        if !value.is_ascii() {
+            return Err(Error::InvalidMgrs("String contains unicode characters".to_string()))
+        }
         let chars = value.as_bytes();
 
         if len >= 3 && value.starts_with("INV") {
@@ -427,11 +430,11 @@ impl FromStr for Mgrs {
 
         let mut zone = 0i32;
         while p < len {
-            if let Some(i) = DIGITS.find(chars[p] as char) {
-                zone = 10 * zone + i as i32;
+            // if let Some(i) = DIGITS_MAP.get(&(chars[p] as char)) {
+            if (chars[p] as char).is_ascii_digit() {
+                zone = 10 * zone + i32::from(chars[p] - b'0');
                 p += 1;
-            }
-            else {
+            } else {
                 break;
             }
         }
@@ -450,15 +453,43 @@ impl FromStr for Mgrs {
 
         let utmp = zone != UPS;
         let zonem = zone - 1;
-        let band = utmp.ternary(LATBAND, UPSBAND);
-        
-        let mut band_idx = if let Some(i) = band.find(chars[p] as char) {
-            i as i32
+
+        let cur_char = chars[p];
+        #[allow(clippy::collapsible_else_if)]
+        let mut band_idx = if utmp {
+            // First check if it's a valid latband
+            if (b'C'..=b'X').contains(&cur_char) && cur_char != b'I' && cur_char != b'O' {
+                // Then convert to index
+                // First make it relative to C
+                let idx = cur_char - b'C';
+                // Decrement if it's past H to account for missing I
+                let idx = (cur_char > b'H').ternary_lazy(|| idx - 1, || idx);
+                // Decrement if it's past N to account for missing O
+                let idx = (cur_char > b'N').ternary_lazy(|| idx - 1, || idx);
+                i32::from(idx)
+            } else {
+                -1
+            }
         } else {
+            if cur_char == b'A' {
+                0
+            } else if cur_char == b'B' {
+                1
+            } else if cur_char == b'Y' {
+                2
+            } else if cur_char == b'Z' {
+                3
+            } else {
+                -1
+            }
+        };
+
+        if band_idx == -1 {
+            let band = utmp.ternary(LATBAND, UPSBAND);
             let label = utmp.ternary("UTM", "UPS");
             return Err(Error::InvalidMgrs(format!("Band letter {} not in {label} set {band}", chars[p] as char)));
-        };
-        
+        }
+
         p += 1;
 
         let northp = band_idx >= utmp.ternary(10, 2);
@@ -489,26 +520,162 @@ impl FromStr for Mgrs {
             return Err(Error::InvalidMgrs(format!("Missing row letter in {value}")));
         }
 
-        #[allow(clippy::cast_sign_loss)]
-        let col = utmp.ternary_lazy(|| UTMCOLS[(zonem % 3) as usize], || UPSCOLS[band_idx as usize]);
-        #[allow(clippy::cast_sign_loss)]
-        let row = utmp.ternary_lazy(|| UTMROW, || UPSROWS[usize::from(northp)]);
-        let mut col_idx = col
-            .find(chars[p] as char)
-            .ok_or_else(|| {
-                let label = if utmp { format!("zone {}", &value[..p-1]) } else { format!("UPS band {}", &value[p-1..p]) };
-                Error::InvalidMgrs(format!("Column letter {} not in {label} set {col}", &value[p..=p]))
-            })? as i32;
+        let cur_char = chars[p];
+        // More efficient than find()
+        let mut col_idx = if utmp {
+            match zonem % 3 {
+                0 => {
+                    if (b'A'..=b'H').contains(&cur_char) {
+                        i32::from(cur_char - b'A')
+                    } else {
+                        -1
+                    }
+                }
+                1 => {
+                    if (b'J'..=b'R').contains(&cur_char) && cur_char != b'O' {
+                        if cur_char < b'O' {
+                            i32::from(cur_char - b'J')
+                        } else {
+                            i32::from(cur_char - b'J' - 1)
+                        }
+                    } else {
+                        -1
+                    }
+                } 
+                2 => {
+                    if (b'S'..=b'Z').contains(&cur_char) {
+                        i32::from(cur_char - b'S')
+                    } else {
+                        -1
+                    }
+                }
+                _ => unreachable!()
+            }
+        } else {
+            // &["JKLPQRSTUXYZ", "ABCFGHJKLPQR", "RSTUXYZ", "ABCFGHJ"]
+            match band_idx {
+                // JKLPQRSTUXYZ
+                0 => {
+                    if (b'J'..=b'Z').contains(&cur_char) && !(b'M'..=b'O').contains(&cur_char) && cur_char != b'V' && cur_char != b'W' {
+                        let idx = cur_char - b'J';
+                        let idx = (cur_char > b'L').ternary_lazy(|| idx - 3, || idx);
+                        let idx = (cur_char > b'U').ternary_lazy(|| idx - 2, || idx);
+                        i32::from(idx)
+                    } else {
+                        -1
+                    }
+                }
+                // ABCFGHJKLPQR
+                1 => {
+                    if  (b'A'..=b'R').contains(&cur_char) && 
+                        cur_char != b'D' &&
+                        cur_char != b'E' &&
+                        cur_char != b'I' &&
+                        !(b'M'..=b'O').contains(&cur_char)
+                    {
+                        let idx = cur_char - b'A';
+                        let idx = (cur_char > b'C').ternary_lazy(|| idx - 2, || idx);
+                        let idx = (cur_char > b'H').ternary_lazy(|| idx - 1, || idx);
+                        let idx = (cur_char > b'L').ternary_lazy(|| idx - 3, || idx);
+                        i32::from(idx)
+                    } else {
+                        -1
+                    }
+                }
+                // RSTUXYZ
+                2 => {
+                    if  (b'R'..=b'Z').contains(&cur_char) && cur_char != b'V' && cur_char != b'W' {
+                        let idx = cur_char - b'R';
+                        let idx = (cur_char > b'U').ternary_lazy(|| idx - 2, || idx);
+                        i32::from(idx)
+                    } else {
+                        -1
+                    }
+                }
+                // ABCFGHJ
+                3 => {
+                    if  (b'A'..=b'J').contains(&cur_char) && 
+                        cur_char != b'D' &&
+                        cur_char != b'E' &&
+                        cur_char != b'I'
+                    {
+                        let idx = cur_char - b'A';
+                        let idx = (cur_char > b'C').ternary_lazy(|| idx - 2, || idx);
+                        let idx = (cur_char > b'H').ternary_lazy(|| idx - 1, || idx);
+                        i32::from(idx)
+                    } else {
+                        -1
+                    }
+                }
+                _ => unreachable!()
+            }
+        };
+
+        if col_idx == -1 {
+            #[allow(clippy::cast_sign_loss)]
+            let col = utmp.ternary_lazy(|| UTMCOLS[(zonem % 3) as usize], || UPSCOLS[band_idx as usize]);
+            let label = if utmp { format!("zone {}", &value[..p-1]) } else { format!("UPS band {}", &value[p-1..p]) };
+            return Err(Error::InvalidMgrs(format!("Column letter {} not in {label} set {col}", &value[p..=p])));
+        }
 
         p += 1;
 
-        let mut row_idx = row
-            .find(chars[p] as char)
-            .ok_or_else(|| {
-                let northp = usize::from(northp);
-                let label = if utmp { "UTM".to_string() } else { format!("UPS {}", &HEMISPHERES[northp..=northp]) };
-                Error::InvalidMgrs(format!("Row letter {} not in {label} set {row}", chars[p]))
-            })? as i32;
+        let cur_char = chars[p];
+        // More efficient than find()
+        let mut row_idx = if utmp {
+            // "ABCDEFGHJKLMNPQRSTUV"
+            // First check if it's a valid latband
+            if (b'A'..=b'V').contains(&cur_char) && cur_char != b'I' && cur_char != b'O' {
+                // Then convert to index
+                // First make it relative to A
+                let idx = cur_char - b'A';
+                // Decrement if it's past H to account for missing I
+                let idx = (cur_char > b'H').ternary_lazy(|| idx - 1, || idx);
+                // Decrement if it's past N to account for missing O
+                let idx = (cur_char > b'N').ternary_lazy(|| idx - 1, || idx);
+                i32::from(idx)
+            } else {
+                -1
+            }
+        } else {
+            // &["ABCDEFGHJKLMNPQRSTUVWXYZ", "ABCDEFGHJKLMNP"]
+            #[allow(clippy::collapsible_else_if)]
+            if northp {
+                if (b'A'..=b'P').contains(&cur_char) && cur_char != b'I' && cur_char != b'O' {
+                    // Then convert to index
+                    // First make it relative to A
+                    let idx = cur_char - b'A';
+                    // Decrement if it's past H to account for missing I
+                    let idx = (cur_char > b'H').ternary_lazy(|| idx - 1, || idx);
+                    // Decrement if it's past N to account for missing O
+                    let idx = (cur_char > b'N').ternary_lazy(|| idx - 1, || idx);
+                    i32::from(idx)
+                } else {
+                    -1
+                }
+            } else {
+                if cur_char.is_ascii_uppercase() && cur_char != b'I' && cur_char != b'O' {
+                    // Then convert to index
+                    // First make it relative to A
+                    let idx = cur_char - b'A';
+                    // Decrement if it's past H to account for missing I
+                    let idx = (cur_char > b'H').ternary_lazy(|| idx - 1, || idx);
+                    // Decrement if it's past N to account for missing O
+                    let idx = (cur_char > b'N').ternary_lazy(|| idx - 1, || idx);
+                    i32::from(idx)
+                } else {
+                    -1
+                }
+            }
+        };
+        
+        if row_idx == -1 {
+            #[allow(clippy::cast_sign_loss)]
+            let row = utmp.ternary_lazy(|| UTMROW, || UPSROWS[usize::from(northp)]);
+            let northp = usize::from(northp);
+            let label = if utmp { "UTM".to_string() } else { format!("UPS {}", &HEMISPHERES[northp..=northp]) };
+            return Err(Error::InvalidMgrs(format!("Row letter {} not in {label} set {row}", chars[p] as char)));
+        }
 
         p += 1;
 
@@ -540,23 +707,26 @@ impl FromStr for Mgrs {
 
         for i in 0..precision {
             unit *= BASE;
-            let x_idx = DIGITS
-                .find(chars[p + i] as char)
-                .ok_or_else(|| {
-                    Error::InvalidMgrs(format!("Encountered a non-digit in {}", &value[p..]))
-                })?;
-            let y_idx = DIGITS
-                .find(chars[p + i + precision] as char)
-                .ok_or_else(|| {
-                    Error::InvalidMgrs(format!("Encountered a non-digit in {}", &value[p..]))
-                })?;
+            let x_char = chars[p + i];
+            let x_idx = if x_char.is_ascii_digit() {
+                i32::from(x_char - b'0')
+            } else {
+                return Err(Error::InvalidMgrs(format!("Encountered a non-digit in {}", &value[p..])));
+            };
+
+            let y_char = chars[p + i + precision];
+            let y_idx = if y_char.is_ascii_digit() {
+                i32::from(y_char - b'0')
+            } else {
+                return Err(Error::InvalidMgrs(format!("Encountered a non-digit in {}", &value[p..])));
+            };
             
-            x = BASE * x + x_idx as i32;
-            y = BASE * y + y_idx as i32;
+            x = BASE * x + x_idx;
+            y = BASE * y + y_idx;
         }
 
         if (len - p) % 2 == 1 {
-            if DIGITS.find(chars[len - 1] as char).is_none() {
+            if !(chars[len - 1] as char).is_ascii_digit() {
                 return Err(Error::InvalidMgrs(format!("Encountered a non-digit in {}", &value[p..])));
             }
 
@@ -567,7 +737,6 @@ impl FromStr for Mgrs {
             return Err(Error::InvalidMgrs(format!("More than {} digits in {}", 2*MAX_PRECISION, &value[p..])));
         }
 
-        // TODO: Include centerp somehow
         let centerp = true;
         if centerp {
             unit *= 2;
@@ -663,7 +832,7 @@ pub(crate) fn check_coords(utmp: bool, northp: bool, x: f64, y: f64) -> Result<(
 impl Display for Mgrs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         lazy_static! {
-            static ref ANG_EPS: f64 = 1_f64 * 2_f64.powi(-(f64::DIGITS as i32 - 7));
+            static ref ANG_EPS: f64 = 1_f64 * 2_f64.powi(-(f64::MANTISSA_DIGITS as i32 - 7));
         }
 
         let lat = if self.utm.zone > 0 {
@@ -698,10 +867,6 @@ impl Display for Mgrs {
         // Other Forward call
         let utmp = self.utm.zone != 0;
         let (northp, easting, northing) = check_coords(utmp, self.utm.northp, self.utm.easting, self.utm.northing)
-            .map_err(|e| {
-                println!("UTM: {:?}", self.utm);
-                e
-            })
             .expect("Invalid coords; please report this to the library author");
         // Create pre-allocated string of the correct length
         let mut mgrs_str = [0u8; 2 + 3 + 2*MAX_PRECISION as usize];
@@ -729,14 +894,14 @@ impl Display for Mgrs {
         #[allow(clippy::cast_sign_loss)]
         if utmp {
             // Correct fuzziness in latitude near equator
-            let band_idx = (lat.abs() < *ANG_EPS).ternary(northp.ternary(0, -1), to_latitude_band(lat));
+            let band_idx = (lat.abs() < *ANG_EPS).ternary_lazy(|| northp.ternary(0, -1), || to_latitude_band(lat));
             let col_idx = xh - MINUTMCOL;
             let row_idx = utm_row(band_idx, col_idx, yh % UTM_ROW_PERIOD);
 
-            if row_idx != yh - northp.ternary(MINUTM_N_ROW, MAXUTM_S_ROW) {
-                // TODO: Latitude is inconsistent with UTM coordinates
-                todo!()
-            }
+            assert!(
+                row_idx == yh - northp.ternary(MINUTM_N_ROW, MAXUTM_S_ROW),
+                "Latitude is inconsistent with UTM; this should not occur."
+            );
 
             mgrs_str[z] = LATBAND.as_bytes()[(10 + band_idx) as usize];
             z += 1;
