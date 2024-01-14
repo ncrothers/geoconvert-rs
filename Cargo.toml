@@ -12,6 +12,7 @@ edition = "2021"
 [dependencies]
 lazy_static = "1.4.0"
 num = "0.4.1"
+ryu = "1.0.16"
 serde = { version = "1.0.192", features = ["derive"], optional = true }
 thiserror = "1.0.50"
 
