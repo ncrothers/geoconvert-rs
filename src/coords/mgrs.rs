@@ -249,7 +249,7 @@ impl Mgrs {
         Self::from_str(mgrs_str)
     }
 
-    /// Converts from [`Mgrs`] to [`LatLon`]
+    /// Converts from [`LatLon`] to [`Mgrs`]
     /// 
     /// # Usage
     /// 
@@ -272,7 +272,7 @@ impl Mgrs {
         }
     }
 
-    /// Converts from [`LatLon`] to [`Mgrs`]
+    /// Converts from [`Mgrs`] to [`LatLon`]
     /// 
     /// # Usage
     /// 
